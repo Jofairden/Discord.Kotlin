@@ -30,6 +30,7 @@ class ClientGuardian(
     private val lens = WsMessage.auto<GatewayMessage>().toLens()
 
     private var sequence: Int? = null
+    private fun getSequenceAsNode() = sequence?.let { return@let it.toJsonTree<IntNode>() } ?: NullNode.instance
     private var pingTime: Long = 0L
     private val pingChannel = Channel<Long>()
 
@@ -58,6 +59,10 @@ class ClientGuardian(
         socket.send(lens.create(gatewayMessage))
     }
 
+    private fun heartbeatFrame() {
+        dispatch(GatewayMessage(OpCode.HEARTBEAT, getSequenceAsNode()))
+    }
+
     private fun login(socket: Websocket) {
         dispatch(
             GatewayMessage(
@@ -80,14 +85,12 @@ class ClientGuardian(
         while (isActive) {
             println("Sending heartbeat: ${sequence ?: "null"} : Delaying: ${helloPayload.heartBeatInterval}")
             pingTime = currentTimeMillis()
-            dispatch(GatewayMessage(
-                OpCode.HEARTBEAT,
-                sequence?.let { return@let it.toJsonTree<IntNode>() } ?: NullNode.instance))
+            heartbeatFrame()
             delay(helloPayload.heartBeatInterval)
         }
     }
 
-    private suspend fun CoroutineScope.zombiedConnection(pingChannel: ReceiveChannel<Long>) = launch {
+    private fun CoroutineScope.zombiedConnection(pingChannel: ReceiveChannel<Long>) = launch {
         while (isActive) {
             // TODO close connection if HB-ACK is down
             select<Unit> {
@@ -112,6 +115,7 @@ class ClientGuardian(
                 println(this)
                 when (opCode) {
                     OpCode.HELLO -> heartbeat(payload.toJsonNode())
+                    OpCode.HEARTBEAT -> heartbeatFrame()
                     OpCode.HEARTBEAT_ACK -> pingChannel.send(currentTimeMillis() - pingTime)
 
                     else -> {
